@@ -63,6 +63,49 @@ JSON endpoints directly at `http://127.0.0.1:8000/prices` and
 `--reload` is handy during development (auto-restarts on code changes); drop it
 for a plain run.
 
+## Deploying to Render (free tier)
+
+The app needs no database and no secrets (aWATTar needs no API key), so it's a
+plain stateless web service.
+
+**Option A — Blueprint (`render.yaml`, recommended):** the repo already
+includes a `render.yaml`. In the Render dashboard, choose **New +** →
+**Blueprint**, point it at this GitHub repo, and Render will read
+`render.yaml` and create the service automatically:
+
+```yaml
+services:
+  - type: web
+    name: energy-price-dashboard
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+```
+
+**Option B — manual web service:** **New +** → **Web Service**, connect the
+repo, and set:
+
+| Setting | Value |
+|---|---|
+| Runtime | Python 3 |
+| Build Command | `pip install -r requirements.txt` |
+| Start Command | `uvicorn app.main:app --host 0.0.0.0 --port $PORT` |
+| Plan | Free |
+
+Render injects the `PORT` environment variable at runtime and the start
+command's `--port $PORT` binds uvicorn to it directly — no code changes are
+needed for that part, since the shell expands `$PORT` before uvicorn even
+starts. The Python version is pinned via `.python-version` (`3.14`) so the
+build uses the same interpreter version as local development.
+
+Notes on the free tier:
+- The service **spins down after 15 minutes of inactivity** and takes ~30-60s
+  to wake up on the next request (cold start) — the first `/prices` hit after
+  idling will be slow.
+- No persistent disk is needed: every request fetches fresh data from
+  aWATTar, there's nothing to store between requests.
+
 ## Project layout
 
 ```
@@ -72,6 +115,8 @@ app/
 static/
   index.html   # frontend: fetches /prices and /cheapest-hours, renders an SVG bar chart
 requirements.txt
+render.yaml    # Render Blueprint: build/start commands for the free-tier web service
+.python-version  # pins the Python version Render (and local venvs) should use
 ```
 
 ## Notes
