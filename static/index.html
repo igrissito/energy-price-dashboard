@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Austrian Electricity Prices</title>
+<style>
+  .viz-root {
+    color-scheme: light;
+    --page-plane:     #f9f9f7;
+    --surface-1:      #fcfcfb;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --muted:          #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+    --series-1:       #2a78d6;
+    --status-good:    #0ca30c;
+    --border:         rgba(11, 11, 11, 0.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    .viz-root {
+      color-scheme: dark;
+      --page-plane:     #0d0d0d;
+      --surface-1:      #1a1a19;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --muted:          #898781;
+      --gridline:       #2c2c2a;
+      --baseline:       #383835;
+      --series-1:       #3987e5;
+      --status-good:    #0ca30c;
+      --border:         rgba(255, 255, 255, 0.10);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--page-plane);
+    color: var(--text-primary);
+  }
+  .viz-root { max-width: 900px; margin: 0 auto; padding: 24px 20px 48px; }
+
+  h1 { font-size: 1.3rem; margin: 0 0 4px; }
+  .subtitle { color: var(--text-secondary); font-size: 0.9rem; margin: 0 0 20px; }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+  }
+  .controls input {
+    width: 3.5em;
+    font: inherit;
+    padding: 3px 6px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface-1);
+    color: var(--text-primary);
+  }
+  .controls button {
+    font: inherit;
+    padding: 4px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface-1);
+    color: var(--text-primary);
+    cursor: pointer;
+  }
+  .controls button:hover { background: var(--gridline); }
+
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 16px 8px;
+  }
+
+  .legend {
+    display: flex;
+    gap: 18px;
+    margin-bottom: 8px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+
+  svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .bar { }
+  .axis-label { fill: var(--muted); font-size: 10px; }
+  .gridline { stroke: var(--gridline); stroke-width: 1; }
+  .baseline { stroke: var(--baseline); stroke-width: 1; }
+  .cap-label { fill: var(--text-primary); font-size: 10px; font-weight: 600; }
+
+  #tooltip {
+    position: fixed;
+    pointer-events: none;
+    background: var(--text-primary);
+    color: var(--surface-1);
+    font-size: 0.8rem;
+    padding: 6px 9px;
+    border-radius: 6px;
+    opacity: 0;
+    transform: translate(-50%, -100%);
+    transition: opacity 0.08s ease;
+    white-space: nowrap;
+    z-index: 10;
+  }
+
+  .summary { margin-top: 14px; font-size: 0.9rem; color: var(--text-secondary); }
+  .summary strong { color: var(--text-primary); }
+
+  .table-toggle { background: none; border: none; color: var(--series-1); cursor: pointer; font: inherit; padding: 0; margin-top: 14px; text-decoration: underline; }
+
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.85rem; }
+  th, td { text-align: right; padding: 4px 8px; border-bottom: 1px solid var(--gridline); font-variant-numeric: tabular-nums; }
+  th:first-child, td:first-child { text-align: left; }
+  tr.cheapest td { color: var(--status-good); font-weight: 600; }
+  #error { color: #d03b3b; font-size: 0.9rem; margin-top: 12px; }
+</style>
+</head>
+<body>
+<div class="viz-root">
+  <h1>Austrian Day-Ahead Electricity Prices</h1>
+  <p class="subtitle">Hourly spot market prices from aWATTar &mdash; cheapest upcoming hours highlighted</p>
+
+  <div class="controls">
+    <label for="n-input">Highlight cheapest</label>
+    <input id="n-input" type="number" min="1" max="24" value="3" />
+    <label for="n-input">hours</label>
+    <button id="refresh-btn">Refresh</button>
+  </div>
+
+  <div class="card">
+    <div class="legend">
+      <span><span class="swatch" style="background: var(--series-1)"></span>Price (ct/kWh)</span>
+      <span><span class="swatch" style="background: var(--status-good)"></span><span id="legend-cheapest-swatch">Cheapest hours</span></span>
+    </div>
+    <div id="chart"></div>
+    <p class="summary" id="summary"></p>
+    <button class="table-toggle" id="table-toggle">Show as table</button>
+    <div id="table-wrap" style="display:none"></div>
+    <div id="error"></div>
+  </div>
+</div>
+<div id="tooltip"></div>
+
+<script>
+const chartEl = document.getElementById('chart');
+const tooltip = document.getElementById('tooltip');
+const summaryEl = document.getElementById('summary');
+const errorEl = document.getElementById('error');
+const nInput = document.getElementById('n-input');
+const tableWrap = document.getElementById('table-wrap');
+const tableToggle = document.getElementById('table-toggle');
+
+function fmtHour(iso) {
+  const d = new Date(iso);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+function fmtDay(iso) {
+  return new Date(iso).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
+async function load() {
+  errorEl.textContent = '';
+  const n = Math.max(1, parseInt(nInput.value, 10) || 3);
+  try {
+    const [prices, cheapest] = await Promise.all([
+      fetch('/prices').then(r => { if (!r.ok) throw new Error('prices: ' + r.status); return r.json(); }),
+      fetch('/cheapest-hours?n=' + n).then(r => { if (!r.ok) throw new Error('cheapest-hours: ' + r.status); return r.json(); }),
+    ]);
+    render(prices, cheapest, n);
+  } catch (err) {
+    errorEl.textContent = 'Could not load prices: ' + err.message;
+    chartEl.innerHTML = '';
+  }
+}
+
+function render(prices, cheapest, n) {
+  const cheapestStarts = new Set(cheapest.map(c => c.start));
+  document.getElementById('legend-cheapest-swatch').textContent = `Cheapest ${n} hour${n === 1 ? '' : 's'}`;
+
+  const width = 860, height = 320;
+  const marginTop = 16, marginBottom = 36, marginLeft = 36, marginRight = 8;
+  const plotW = width - marginLeft - marginRight;
+  const plotH = height - marginTop - marginBottom;
+
+  const maxPrice = Math.max(...prices.map(p => p.price_ct_kwh), 0.01);
+  const niceMax = Math.ceil(maxPrice / 2) * 2;
+  const barCount = prices.length;
+  const slot = plotW / barCount;
+  const barWidth = Math.min(24, slot - 2);
+  const labelStride = barCount > 30 ? 4 : barCount > 20 ? 2 : 1;
+
+  const yTicks = 5;
+  let gridSvg = '';
+  for (let i = 0; i <= yTicks; i++) {
+    const val = (niceMax / yTicks) * i;
+    const y = marginTop + plotH - (val / niceMax) * plotH;
+    gridSvg += `<line class="gridline" x1="${marginLeft}" x2="${width - marginRight}" y1="${y}" y2="${y}" />`;
+    gridSvg += `<text class="axis-label" x="${marginLeft - 6}" y="${y + 3}" text-anchor="end">${val.toFixed(1)}</text>`;
+  }
+
+  let barsSvg = '';
+  let labelsSvg = '';
+  let lastDay = null;
+  prices.forEach((p, i) => {
+    const x = marginLeft + i * slot + (slot - barWidth) / 2;
+    const barH = (p.price_ct_kwh / niceMax) * plotH;
+    const y = marginTop + plotH - barH;
+    const isCheap = cheapestStarts.has(p.start);
+    const color = isCheap ? 'var(--status-good)' : 'var(--series-1)';
+    barsSvg += `<rect class="bar" data-idx="${i}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${Math.max(barH, 1).toFixed(1)}" rx="4" ry="4" fill="${color}" />`;
+
+    if (isCheap) {
+      labelsSvg += `<text class="cap-label" x="${(x + barWidth / 2).toFixed(1)}" y="${(y - 5).toFixed(1)}" text-anchor="middle">${p.price_ct_kwh.toFixed(1)}</text>`;
+    }
+
+    if (i % labelStride === 0) {
+      labelsSvg += `<text class="axis-label" x="${(x + barWidth / 2).toFixed(1)}" y="${height - marginBottom + 14}" text-anchor="middle">${fmtHour(p.start)}</text>`;
+    }
+    const day = fmtDay(p.start);
+    if (day !== lastDay) {
+      labelsSvg += `<text class="axis-label" x="${(x + barWidth / 2).toFixed(1)}" y="${height - marginBottom + 26}" text-anchor="middle" font-weight="600">${day}</text>`;
+      lastDay = day;
+    }
+  });
+
+  const baselineY = marginTop + plotH;
+
+  chartEl.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Bar chart of hourly electricity prices, cheapest hours highlighted in green">
+      ${gridSvg}
+      ${barsSvg}
+      ${labelsSvg}
+      <line class="baseline" x1="${marginLeft}" x2="${width - marginRight}" y1="${baselineY}" y2="${baselineY}" />
+    </svg>
+  `;
+
+  chartEl.querySelectorAll('.bar').forEach(rect => {
+    const p = prices[+rect.dataset.idx];
+    rect.addEventListener('mousemove', (e) => showTooltip(e, p, cheapestStarts.has(p.start)));
+    rect.addEventListener('mouseleave', hideTooltip);
+  });
+
+  renderTable(prices, cheapestStarts);
+  renderSummary(cheapest);
+}
+
+function showTooltip(e, p, isCheap) {
+  tooltip.innerHTML = `${fmtDay(p.start)} ${fmtHour(p.start)}&ndash;${fmtHour(p.end)}<br><strong>${p.price_ct_kwh.toFixed(2)} ct/kWh</strong>${isCheap ? ' &middot; cheapest' : ''}`;
+  tooltip.style.left = e.clientX + 'px';
+  tooltip.style.top = (e.clientY - 10) + 'px';
+  tooltip.style.opacity = '1';
+}
+function hideTooltip() { tooltip.style.opacity = '0'; }
+
+function renderSummary(cheapest) {
+  if (!cheapest.length) { summaryEl.textContent = 'No upcoming hours available.'; return; }
+  const parts = cheapest.map(c => `${fmtHour(c.start)}&ndash;${fmtHour(c.end)} (${c.price_ct_kwh.toFixed(1)} ct/kWh)`);
+  summaryEl.innerHTML = `Cheapest upcoming: <strong>${parts.join(', ')}</strong>`;
+}
+
+function renderTable(prices, cheapestStarts) {
+  const rows = prices.map(p => {
+    const cheap = cheapestStarts.has(p.start) ? ' class="cheapest"' : '';
+    return `<tr${cheap}><td>${fmtDay(p.start)} ${fmtHour(p.start)}</td><td>${p.price_ct_kwh.toFixed(2)}</td><td>${p.price_eur_mwh.toFixed(2)}</td></tr>`;
+  }).join('');
+  tableWrap.innerHTML = `
+    <table>
+      <thead><tr><th style="text-align:left">Hour</th><th>ct/kWh</th><th>EUR/MWh</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+tableToggle.addEventListener('click', () => {
+  const showing = tableWrap.style.display !== 'none';
+  tableWrap.style.display = showing ? 'none' : 'block';
+  tableToggle.textContent = showing ? 'Show as table' : 'Hide table';
+});
+
+document.getElementById('refresh-btn').addEventListener('click', load);
+nInput.addEventListener('change', load);
+
+load();
+</script>
+</body>
+</html>
